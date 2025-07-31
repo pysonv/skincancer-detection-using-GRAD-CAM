@@ -1,0 +1,10 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Data and Model directories
+skin_cancer_detection/data/
+skin_cancer_detection/models/
+
+# IDE settings
+.vscode/
