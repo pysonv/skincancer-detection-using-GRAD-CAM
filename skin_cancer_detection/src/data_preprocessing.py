@@ -1,7 +1,38 @@
-import os
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+
+def get_train_generator(train_dir, img_size, batch_size):
+    train_datagen = ImageDataGenerator(
+        rescale=1./255,
+        rotation_range=20,
+        width_shift_range=0.2,
+        height_shift_range=0.2,
+        horizontal_flip=True,
+        fill_mode='nearest'
+    )
+    
+    train_generator = train_datagen.flow_from_directory(
+        train_dir,
+        target_size=img_size,
+        batch_size=batch_size,
+        class_mode='categorical'
+    )
+    return train_generator
+
+def get_validation_generator(val_dir, img_size, batch_size):
+    val_datagen = ImageDataGenerator(rescale=1./255)
+    
+    validation_generator = val_datagen.flow_from_directory(
+        val_dir,
+        target_size=img_size,
+        batch_size=batch_size,
+        class_mode='categorical'
+    )
+    return validation_generator
+
 import pandas as pd
 import numpy as np
 from PIL import Image
+import os
 import shutil
 from sklearn.model_selection import train_test_split
 import requests
