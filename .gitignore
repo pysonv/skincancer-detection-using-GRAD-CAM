@@ -1,0 +1,18 @@
+# Ignore the large processed data directory
+skin_cancer_detection/data/processed/
+
+# Ignore the saved models directory
+skin_cancer_detection/models/
+
+# Ignore Python virtual environment
+venv/
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+
+# Ignore generated output files
+*.png
+
+# Ignore IDE-specific files
+.vscode/

@@ -1,260 +1,94 @@
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-
-def get_train_generator(train_dir, img_size, batch_size):
-    train_datagen = ImageDataGenerator(
-        rescale=1./255,
-        rotation_range=20,
-        width_shift_range=0.2,
-        height_shift_range=0.2,
-        horizontal_flip=True,
-        fill_mode='nearest'
-    )
-    
-    train_generator = train_datagen.flow_from_directory(
-        train_dir,
-        target_size=img_size,
-        batch_size=batch_size,
-        class_mode='categorical'
-    )
-    return train_generator
-
-def get_validation_generator(val_dir, img_size, batch_size):
-    val_datagen = ImageDataGenerator(rescale=1./255)
-    
-    validation_generator = val_datagen.flow_from_directory(
-        val_dir,
-        target_size=img_size,
-        batch_size=batch_size,
-        class_mode='categorical'
-    )
-    return validation_generator
-
-import pandas as pd
-import numpy as np
-from PIL import Image
 import os
 import shutil
+import glob
 from sklearn.model_selection import train_test_split
-import requests
-import zipfile
-from tqdm import tqdm
 
-def download_isic_sample_data():
-    """
-    Download a sample of ISIC skin cancer data for demonstration.
-    In practice, you would download the full ISIC dataset.
-    """
-    print("Note: This is a template for downloading ISIC data.")
-    print("For the full dataset, visit: https://www.isic-archive.com/")
-    print("You'll need to register and download the official dataset.")
-    
-    # Create data directories
-    os.makedirs('../data/raw', exist_ok=True)
-    os.makedirs('../data/processed/train/benign', exist_ok=True)
-    os.makedirs('../data/processed/train/malignant', exist_ok=True)
-    os.makedirs('../data/processed/val/benign', exist_ok=True)
-    os.makedirs('../data/processed/val/malignant', exist_ok=True)
-    os.makedirs('../data/processed/test/benign', exist_ok=True)
-    os.makedirs('../data/processed/test/malignant', exist_ok=True)
-    
-    print("Data directories created successfully!")
+# --- Configuration ---
+# The source directory containing the raw ISIC dataset, with subfolders for each class.
+SOURCE_BASE_DIR = 'C:\\Users\\Pyson v\\Downloads\\archive\\Skin cancer ISIC The International Skin Imaging Collaboration'
+# The destination directory where the processed (train/val/test) data will be saved.
+PROCESSED_BASE_DIR = os.path.join('..', 'data', 'processed')
+# The ratio for splitting data into training, validation, and testing sets.
+TRAIN_RATIO = 0.70
+VALIDATION_RATIO = 0.15
+TEST_RATIO = 0.15
+# A fixed random state for reproducibility of the data split.
+RANDOM_STATE = 42
 
-def preprocess_images(input_dir, output_dir, target_size=(224, 224)):
-    """
-    Preprocess images by resizing and normalizing.
-    """
-    if not os.path.exists(input_dir):
-        print(f"Input directory {input_dir} does not exist!")
-        return
-    
-    os.makedirs(output_dir, exist_ok=True)
-    
-    for filename in tqdm(os.listdir(input_dir)):
-        if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-            try:
-                # Load and resize image
-                img_path = os.path.join(input_dir, filename)
-                image = Image.open(img_path).convert('RGB')
-                image = image.resize(target_size, Image.Resampling.LANCZOS)
-                
-                # Save preprocessed image
-                output_path = os.path.join(output_dir, filename)
-                image.save(output_path, 'JPEG', quality=95)
-                
-            except Exception as e:
-                print(f"Error processing {filename}: {e}")
+# --- Function Definitions ---
 
-def create_dataset_split(data_dir, test_size=0.2, val_size=0.2):
-    """
-    Split dataset into train, validation, and test sets.
-    """
-    # Get all image paths and labels
-    image_paths = []
-    labels = []
+def clean_and_create_dirs():
+    """Deletes the old processed directory and creates a fresh, empty structure."""
+    if os.path.exists(PROCESSED_BASE_DIR):
+        print(f"Removing existing processed directory: {PROCESSED_BASE_DIR}")
+        shutil.rmtree(PROCESSED_BASE_DIR)
     
-    for class_name in os.listdir(data_dir):
-        class_dir = os.path.join(data_dir, class_name)
-        if os.path.isdir(class_dir):
-            for filename in os.listdir(class_dir):
-                if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-                    image_paths.append(os.path.join(class_dir, filename))
-                    labels.append(class_name)
-    
-    # Convert labels to numeric
-    unique_labels = list(set(labels))
-    label_to_idx = {label: idx for idx, label in enumerate(unique_labels)}
-    numeric_labels = [label_to_idx[label] for label in labels]
-    
-    # Split data
-    X_temp, X_test, y_temp, y_test = train_test_split(
-        image_paths, numeric_labels, test_size=test_size, random_state=42, stratify=numeric_labels
-    )
-    
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_temp, y_temp, test_size=val_size/(1-test_size), random_state=42, stratify=y_temp
-    )
-    
-    return {
-        'train': (X_train, y_train),
-        'val': (X_val, y_val),
-        'test': (X_test, y_test),
-        'label_to_idx': label_to_idx,
-        'idx_to_label': {idx: label for label, idx in label_to_idx.items()}
-    }
+    print("Creating new directory structure...")
+    os.makedirs(PROCESSED_BASE_DIR, exist_ok=True)
+    for split in ['train', 'val', 'test']:
+        os.makedirs(os.path.join(PROCESSED_BASE_DIR, split), exist_ok=True)
 
-def copy_split_data(split_data, output_base_dir):
-    """
-    Copy split data to organized directory structure.
-    """
-    for split_name, (paths, labels) in split_data.items():
-        if split_name in ['train', 'val', 'test']:
-            for path, label in zip(paths, labels):
-                # Get class name from numeric label
-                class_name = split_data['idx_to_label'][label]
-                
-                # Create destination directory
-                dest_dir = os.path.join(output_base_dir, split_name, class_name)
-                os.makedirs(dest_dir, exist_ok=True)
-                
-                # Copy file
-                filename = os.path.basename(path)
-                dest_path = os.path.join(dest_dir, filename)
-                shutil.copy2(path, dest_path)
-
-def create_sample_dataset():
-    """
-    Create a sample dataset structure for demonstration.
-    """
-    print("Creating sample dataset structure...")
-    
-    # Create sample data directories
-    sample_dir = '../data/sample'
-    os.makedirs(f'{sample_dir}/benign', exist_ok=True)
-    os.makedirs(f'{sample_dir}/malignant', exist_ok=True)
-    
-    # Create placeholder images (in practice, you'd have real images)
-    from PIL import Image, ImageDraw
-    import random
-    
-    # Generate sample benign images (lighter colors)
-    for i in range(20):
-        img = Image.new('RGB', (224, 224), color=(random.randint(150, 255), 
-                                                  random.randint(150, 200), 
-                                                  random.randint(100, 150)))
-        draw = ImageDraw.Draw(img)
-        # Add some random shapes to simulate skin lesions
-        for _ in range(3):
-            x1, y1 = random.randint(0, 150), random.randint(0, 150)
-            x2, y2 = x1 + random.randint(20, 70), y1 + random.randint(20, 70)
-            color = (random.randint(100, 180), random.randint(80, 120), random.randint(60, 100))
-            draw.ellipse([x1, y1, x2, y2], fill=color)
-        
-        img.save(f'{sample_dir}/benign/benign_{i:03d}.jpg')
-    
-    # Generate sample malignant images (darker, more irregular)
-    for i in range(20):
-        img = Image.new('RGB', (224, 224), color=(random.randint(120, 180), 
-                                                  random.randint(100, 150), 
-                                                  random.randint(80, 120)))
-        draw = ImageDraw.Draw(img)
-        # Add irregular shapes to simulate malignant lesions
-        for _ in range(5):
-            x1, y1 = random.randint(0, 150), random.randint(0, 150)
-            x2, y2 = x1 + random.randint(30, 80), y1 + random.randint(30, 80)
-            color = (random.randint(40, 100), random.randint(20, 80), random.randint(10, 60))
-            draw.ellipse([x1, y1, x2, y2], fill=color)
-        
-        img.save(f'{sample_dir}/malignant/malignant_{i:03d}.jpg')
-    
-    print(f"Sample dataset created with 40 images in {sample_dir}")
-    return sample_dir
-
-def process_multiclass_data(data_dir):
-    print(f"Processing multi-class data from: {data_dir}")
-    
-    # Find class folders
-    class_names = [d for d in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, d))]
-    if not class_names:
-        print(f"Error: No class subdirectories found in {data_dir}")
-        return
+def split_and_copy_files():
+    """Discovers classes, splits files, and copies them to the correct destination."""
+    # Find all class directories in the source training data folder.
+    source_train_dir = os.path.join(SOURCE_BASE_DIR, 'Train')
+    class_names = [d for d in os.listdir(source_train_dir) if os.path.isdir(os.path.join(source_train_dir, d))]
     print(f"Found {len(class_names)} classes: {class_names}")
 
-    # Collect all image paths and labels
-    image_paths = []
-    labels = []
     for class_name in class_names:
-        class_dir = os.path.join(data_dir, class_name)
-        for fname in os.listdir(class_dir):
-            if fname.lower().endswith(('.png', '.jpg', '.jpeg')):
-                image_paths.append(os.path.join(class_dir, fname))
-                labels.append(class_name)
+        print(f"\nProcessing class: {class_name}")
+        
+        # Create class subdirectories in train, val, and test.
+        for split in ['train', 'val', 'test']:
+            os.makedirs(os.path.join(PROCESSED_BASE_DIR, split, class_name), exist_ok=True)
 
-    if not image_paths:
-        print("Error: No images found in the class subdirectories.")
-        return
+        # Get all image paths for the current class from both Train and Test source folders.
+        source_class_dir_train = os.path.join(source_train_dir, class_name)
+        source_class_dir_test = os.path.join(SOURCE_BASE_DIR, 'Test', class_name)
+        
+        all_images = []
+        if os.path.exists(source_class_dir_train):
+            all_images.extend(glob.glob(os.path.join(source_class_dir_train, '*.jpg')))
+        if os.path.exists(source_class_dir_test):
+            all_images.extend(glob.glob(os.path.join(source_class_dir_test, '*.jpg')))
+        
+        if not all_images:
+            print(f"  Warning: No images found for class {class_name}. Skipping.")
+            continue
 
-    print(f"Found a total of {len(image_paths)} images.")
+        # First split: separate out the training set.
+        train_files, remaining_files = train_test_split(
+            all_images, 
+            train_size=TRAIN_RATIO, 
+            random_state=RANDOM_STATE,
+            shuffle=True
+        )
 
-    # Split data
-    X_temp, X_test, y_temp, y_test = train_test_split(
-        image_paths, labels, test_size=0.2, random_state=42, stratify=labels
-    )
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_temp, y_temp, test_size=0.2, random_state=42, stratify=y_temp
-    )
+        # Second split: divide the remainder into validation and test sets.
+        # The ratio needs to be recalculated for the remaining data.
+        val_ratio_adjusted = VALIDATION_RATIO / (VALIDATION_RATIO + TEST_RATIO)
+        val_files, test_files = train_test_split(
+            remaining_files, 
+            train_size=val_ratio_adjusted, 
+            random_state=RANDOM_STATE,
+            shuffle=True
+        )
 
-    split_data = {
-        'train': (X_train, y_train),
-        'val': (X_val, y_val),
-        'test': (X_test, y_test)
-    }
+        # Function to copy files to their destination.
+        def copy_files(files, split_name):
+            for file_path in files:
+                shutil.copy(file_path, os.path.join(PROCESSED_BASE_DIR, split_name, class_name))
+            print(f"  Copied {len(files)} files to {split_name}/{class_name}")
 
-    # Setup processed directories
-    output_base_dir = '../data/processed'
-    if os.path.exists(output_base_dir):
-        print(f"Cleaning old processed data from {output_base_dir}")
-        shutil.rmtree(output_base_dir)
+        # Copy the files to their final destinations.
+        copy_files(train_files, 'train')
+        copy_files(val_files, 'val')
+        copy_files(test_files, 'test')
 
-    print(f"Copying split data to {output_base_dir}")
-    for split_name, (paths, labels) in split_data.items():
-        print(f"Processing {split_name} set...")
-        for path, label in tqdm(zip(paths, labels), total=len(paths)):
-            dest_dir = os.path.join(output_base_dir, split_name, label)
-            os.makedirs(dest_dir, exist_ok=True)
-            shutil.copy(path, dest_dir)
-
-    print("\nData preprocessing completed!")
-    print("You can now run train.py to train the model on your new multi-class dataset.")
-
-
-def main():
-    import argparse
-    parser = argparse.ArgumentParser(description='Preprocess a multi-class skin cancer dataset.')
-    parser.add_argument('--data_dir', type=str, required=True, help='Path to the dataset directory (containing class sub-folders)')
-    args = parser.parse_args()
-    
-    process_multiclass_data(args.data_dir)
-
+# --- Main Execution ---
 
 if __name__ == "__main__":
-    main()
+    print("--- Starting Data Preprocessing ---")
+    clean_and_create_dirs()
+    split_and_copy_files()
+    print("\n--- Data Preprocessing Complete! ---")

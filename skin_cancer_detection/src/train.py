@@ -1,6 +1,7 @@
 import os
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision.datasets import ImageFolder
@@ -8,6 +9,49 @@ from torchvision import transforms
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from torchvision import models
+
+class FocalLoss(nn.Module):
+    """Implements the Focal Loss for handling class imbalance.
+
+    This loss function is an enhancement of Cross-Entropy Loss that down-weights
+    the loss assigned to well-classified examples, allowing the model to focus more
+    on hard-to-classify examples.
+
+    Args:
+        alpha (torch.Tensor, optional): A manual rescaling weight given to each class.
+                                        If given, it has to be a Tensor of size C.
+                                        Otherwise, it is treated as if having all ones.
+        gamma (float, optional): The focusing parameter. Higher values give more weight
+                                 to hard-to-classify examples. Defaults to 2.0.
+        reduction (str, optional): Specifies the reduction to apply to the output:
+                                   'none' | 'mean' | 'sum'. 'none': no reduction will be applied,
+                                   'mean': the sum of the output will be divided by the number of
+                                   elements in the output, 'sum': the output will be summed.
+                                   Defaults to 'mean'.
+    """
+    def __init__(self, alpha=None, gamma=2.0, reduction='mean'):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, inputs, targets):
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
+        pt = torch.exp(-ce_loss)
+        focal_loss = ((1 - pt) ** self.gamma * ce_loss)
+
+        if self.alpha is not None:
+            if self.alpha.device != targets.device:
+                self.alpha = self.alpha.to(targets.device)
+            alpha_t = self.alpha.gather(0, targets.data.view(-1))
+            focal_loss = alpha_t * focal_loss
+
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
 
 class SkinCancerModel(nn.Module):
     def __init__(self, num_classes, fine_tune=False):
@@ -61,9 +105,9 @@ def train_model(model, train_loader, val_loader, num_epochs, device):
     class_weights = 1. / class_counts.float()
     class_weights = class_weights / class_weights.sum() * len(train_loader.dataset.classes)
     class_weights = class_weights.to(device)
-    print(f"Using class weights: {class_weights}")
+    print(f"Using class weights for Focal Loss alpha: {class_weights}")
 
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    criterion = FocalLoss(alpha=class_weights, gamma=2)
     optimizer = optim.Adam(model.parameters(), lr=0.0001) # Using a lower learning rate for fine-tuning
     
     best_val_acc = 0.0
