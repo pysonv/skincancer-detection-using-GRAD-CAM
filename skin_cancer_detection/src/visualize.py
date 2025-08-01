@@ -1,12 +1,39 @@
 import os
 import argparse
 import torch
+import torch.nn as nn
 import numpy as np
 from PIL import Image
 from torchvision import transforms
 import cv2
+import matplotlib.pyplot as plt
 
-from skin_cancer_model import SkinCancerModel
+from torchvision import models
+
+class SkinCancerModel(nn.Module):
+    def __init__(self, num_classes, fine_tune=False):
+        super(SkinCancerModel, self).__init__()
+        self.resnet = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
+
+        for param in self.resnet.parameters():
+            param.requires_grad = False
+
+        if fine_tune:
+            for param in self.resnet.layer3.parameters():
+                param.requires_grad = True
+            for param in self.resnet.layer4.parameters():
+                param.requires_grad = True
+
+        num_ftrs = self.resnet.fc.in_features
+        self.resnet.fc = nn.Sequential(
+            nn.Linear(num_ftrs, 512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(512, num_classes)
+        )
+
+    def forward(self, x):
+        return self.resnet(x)
 
 # Function to load class names from the training directory
 def get_class_names(data_dir='../data/processed/train'):
@@ -69,14 +96,32 @@ def visualize_and_save(image_path, cam_tensor, predicted_class_name, confidence)
 
     superimposed_img = cv2.addWeighted(original_img, 0.6, heatmap_color, 0.4, 0)
 
-    # Add text with prediction and confidence
-    text = f"{predicted_class_name} ({confidence:.2%})"
-    cv2.putText(superimposed_img, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
+    # Create a comparison plot
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
 
-    output_path = '../gradcam_visualization.png'
-    cv2.imwrite(output_path, superimposed_img)
+    # Convert images from OpenCV BGR to Matplotlib RGB for correct color display
+    original_img_rgb = cv2.cvtColor(original_img, cv2.COLOR_BGR2RGB)
+    superimposed_img_rgb = cv2.cvtColor(superimposed_img, cv2.COLOR_BGR2RGB)
+
+    # Display original image
+    ax1.imshow(original_img_rgb)
+    ax1.set_title('Original Image')
+    ax1.axis('off')
+
+    # Display Grad-CAM image
+    ax2.imshow(superimposed_img_rgb)
+    ax2.set_title('Grad-CAM Heatmap')
+    ax2.axis('off')
+
+    # Add a main title with detailed information
+    true_class = os.path.basename(os.path.dirname(image_path))
+    fig.suptitle(f'Predicted: {predicted_class_name} ({confidence:.2f}%)\nTrue Class: {true_class}', fontsize=16)
+
+    # Save the final plot
+    output_path = os.path.join('../', 'gradcam_visualization.png')
+    plt.savefig(output_path)
+    print(f"Comparison visualization saved to: {output_path}")
     print(f"Predicted class: {predicted_class_name} with {confidence:.2%} confidence.")
-    print(f"Grad-CAM visualization saved to: {output_path}")
 
 def main():
     parser = argparse.ArgumentParser(description='Visualize Grad-CAM for a skin cancer model.')
@@ -95,9 +140,9 @@ def main():
     model.load_state_dict(torch.load(args.model_path, map_location=device))
 
     # Unfreeze the target layer for gradient calculation
-    for param in model.base_model.layer4.parameters():
+    for param in model.resnet.layer4.parameters():
         param.requires_grad = True
-    target_layer = model.base_model.layer4[-1]
+    target_layer = model.resnet.layer4[-1]
     grad_cam = GradCAM(model, target_layer)
 
     transform = transforms.Compose([
