@@ -53,13 +53,13 @@ class GradCAM:
         cam_weights = self._get_cam_weights(self.gradients)
         cam = torch.sum(cam_weights * self.activations, dim=1).squeeze()
         cam = torch.relu(cam)
-        return cam.detach(), class_idx
+        return cam.detach(), class_idx, output.detach()
 
     def remove_hooks(self):
         for handle in self.hook_handles:
             handle.remove()
 
-def visualize_and_save(image_path, cam_tensor, predicted_class_name):
+def visualize_and_save(image_path, cam_tensor, predicted_class_name, confidence):
     original_img = cv2.imread(image_path)
     heatmap = cam_tensor.cpu().numpy()
     heatmap = cv2.resize(heatmap, (original_img.shape[1], original_img.shape[0]))
@@ -69,9 +69,13 @@ def visualize_and_save(image_path, cam_tensor, predicted_class_name):
 
     superimposed_img = cv2.addWeighted(original_img, 0.6, heatmap_color, 0.4, 0)
 
+    # Add text with prediction and confidence
+    text = f"{predicted_class_name} ({confidence:.2%})"
+    cv2.putText(superimposed_img, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
+
     output_path = '../gradcam_visualization.png'
     cv2.imwrite(output_path, superimposed_img)
-    print(f"Predicted class: {predicted_class_name}")
+    print(f"Predicted class: {predicted_class_name} with {confidence:.2%} confidence.")
     print(f"Grad-CAM visualization saved to: {output_path}")
 
 def main():
@@ -105,10 +109,14 @@ def main():
     input_tensor = transform(image).unsqueeze(0).to(device)
 
     print(f"Generating Grad-CAM for: {args.image_path}")
-    cam, predicted_idx = grad_cam.generate_cam(input_tensor)
+    cam, predicted_idx, output = grad_cam.generate_cam(input_tensor)
     grad_cam.remove_hooks()
 
-    visualize_and_save(args.image_path, cam, class_names[predicted_idx])
+    # Get confidence score
+    probabilities = torch.softmax(output, dim=1)[0]
+    confidence = probabilities[predicted_idx].item()
+
+    visualize_and_save(args.image_path, cam, class_names[predicted_idx], confidence)
 
 if __name__ == "__main__":
     main()
