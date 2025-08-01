@@ -13,10 +13,9 @@ def get_class_names(data_dir='../data/processed/train'):
     if not os.path.exists(data_dir):
         print(f"Error: Directory not found at '{data_dir}'")
         return None
-    class_names = sorted([d.name for d in os.scandir(data_dir) if d.is_dir()])
-    return class_names
+    return sorted([d.name for d in os.scandir(data_dir) if d.is_dir()])
 
-# A robust Grad-CAM implementation
+# A robust Grad-CAM implementation using modern hooks
 class GradCAM:
     def __init__(self, model, target_layer):
         self.model = model
@@ -29,13 +28,13 @@ class GradCAM:
 
     def _register_hooks(self):
         def forward_hook(module, input, output):
-            self.activations = output.detach()
+            self.activations = output
 
         def backward_hook(module, grad_input, grad_output):
-            self.gradients = grad_output[0].detach()
+            self.gradients = grad_output[0]
 
         self.hook_handles.append(self.target_layer.register_forward_hook(forward_hook))
-        self.hook_handles.append(self.target_layer.register_backward_hook(backward_hook))
+        self.hook_handles.append(self.target_layer.register_full_backward_hook(backward_hook))
 
     def _get_cam_weights(self, grads):
         return torch.mean(grads, dim=[2, 3], keepdim=True)
@@ -46,12 +45,15 @@ class GradCAM:
             class_idx = output.argmax(dim=1).item()
 
         self.model.zero_grad()
-        output[:, class_idx].backward()
+        output[:, class_idx].backward(retain_graph=True)
+
+        if self.gradients is None:
+            raise RuntimeError("Gradients were not captured. Check hook registration.")
 
         cam_weights = self._get_cam_weights(self.gradients)
         cam = torch.sum(cam_weights * self.activations, dim=1).squeeze()
         cam = torch.relu(cam)
-        return cam, class_idx
+        return cam.detach(), class_idx
 
     def remove_hooks(self):
         for handle in self.hook_handles:
@@ -61,7 +63,7 @@ def visualize_and_save(image_path, cam_tensor, predicted_class_name):
     original_img = cv2.imread(image_path)
     heatmap = cam_tensor.cpu().numpy()
     heatmap = cv2.resize(heatmap, (original_img.shape[1], original_img.shape[0]))
-    heatmap = (heatmap - np.min(heatmap)) / (np.max(heatmap) - np.min(heatmap))
+    heatmap = (heatmap - np.min(heatmap)) / (np.max(heatmap) - np.min(heatmap) + 1e-8)
     heatmap = np.uint8(255 * heatmap)
     heatmap_color = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
 
@@ -88,6 +90,9 @@ def main():
     model = SkinCancerModel(num_classes=num_classes).to(device)
     model.load_state_dict(torch.load(args.model_path, map_location=device))
 
+    # Unfreeze the target layer for gradient calculation
+    for param in model.base_model.layer4.parameters():
+        param.requires_grad = True
     target_layer = model.base_model.layer4[-1]
     grad_cam = GradCAM(model, target_layer)
 
